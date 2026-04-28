@@ -55,15 +55,20 @@ def parse_args():
         default=1.0,
         help="Seconds between serial reconnect attempts after disconnect/open failure.",
     )
-    parser.add_argument(
+    unbuffered_group = parser.add_mutually_exclusive_group()
+    unbuffered_group.add_argument(
         "--unbuffered-serial",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help=(
-            "Minimize serial buffering/latency (default: enabled). "
-            "Use --no-unbuffered-serial to disable."
-        ),
+        dest="unbuffered_serial",
+        action="store_true",
+        help="Minimize serial buffering/latency (default: enabled).",
     )
+    unbuffered_group.add_argument(
+        "--no-unbuffered-serial",
+        dest="unbuffered_serial",
+        action="store_false",
+        help="Disable unbuffered serial mode.",
+    )
+    parser.set_defaults(unbuffered_serial=True)
     parser.add_argument(
         "--log-level",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
