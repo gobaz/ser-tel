@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Serial-to-multi-client Telnet bridge with auto-reconnect support."""
-# pylint: disable=invalid-name
 
 import argparse
 import asyncio
@@ -12,8 +11,8 @@ import threading
 import time
 from typing import Optional
 
-import serial  # pylint: disable=import-error
-import telnetlib3  # pylint: disable=import-error
+import serial
+import telnetlib3
 
 SERIAL_LOST_NOTICE = b"\r\n[serial] lost\r\n"
 SERIAL_RECONNECTED_NOTICE = b"\r\n[serial] reconnected\r\n"
@@ -109,7 +108,6 @@ def format_peer(peername):
     return str(peername)
 
 
-# pylint: disable=too-many-instance-attributes
 class SerialTelnetRepeater:
     """Bridge one serial port to many concurrent Telnet clients."""
 

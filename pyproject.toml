@@ -8,3 +8,14 @@ dependencies = [
     "pyserial>=3.5",
     "telnetlib3>=4.0.2",
 ]
+
+[tool.pylint.main]
+py-version = "3.12"
+
+[tool.pylint.basic]
+# Allow script filenames like ser-tel.py while still enforcing lowercase style.
+module-rgx = "[a-z_][a-z0-9_-]*$"
+
+[tool.pylint.design]
+# This service object keeps thread/server/serial state; 12 is intentional.
+max-attributes = 12
