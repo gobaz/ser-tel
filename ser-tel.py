@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+"""Serial-to-multi-client Telnet bridge with auto-reconnect support."""
+# pylint: disable=invalid-name
 
 import argparse
 import asyncio
@@ -10,14 +12,15 @@ import threading
 import time
 from typing import Optional
 
-import serial
-import telnetlib3
+import serial  # pylint: disable=import-error
+import telnetlib3  # pylint: disable=import-error
 
 SERIAL_LOST_NOTICE = b"\r\n[serial] lost\r\n"
 SERIAL_RECONNECTED_NOTICE = b"\r\n[serial] reconnected\r\n"
 
 
 def parse_args():
+    """Parse and validate CLI arguments."""
     parser = argparse.ArgumentParser(
         description="Share one serial port with multiple telnet clients."
     )
@@ -85,6 +88,7 @@ def parse_args():
 
 
 def is_loopback_host(host):
+    """Return True when *host* is loopback-like (`localhost` or 127/::1)."""
     if host in ("localhost",):
         return True
     try:
@@ -94,12 +98,16 @@ def is_loopback_host(host):
 
 
 def format_peer(peername):
+    """Format a peer address tuple as `host:port` when possible."""
     if isinstance(peername, tuple) and len(peername) >= 2:
         return f"{peername[0]}:{peername[1]}"
     return str(peername)
 
 
+# pylint: disable=too-many-instance-attributes
 class SerialTelnetRepeater:
+    """Bridge one serial port to many concurrent Telnet clients."""
+
     def __init__(self, args):
         self.args = args
         self.stop_event = threading.Event()
@@ -116,6 +124,7 @@ class SerialTelnetRepeater:
         self.write_thread: Optional[threading.Thread] = None
 
     async def run(self):
+        """Start workers and serve Telnet clients until stop is requested."""
         self.loop = asyncio.get_running_loop()
         self.start_serial_workers()
 
@@ -136,6 +145,7 @@ class SerialTelnetRepeater:
             await self.shutdown()
 
     async def shutdown(self):
+        """Stop server, disconnect clients, and terminate serial workers."""
         self.stop_event.set()
 
         if self.server is not None:
@@ -143,24 +153,24 @@ class SerialTelnetRepeater:
             await self.server.wait_closed()
 
         for writer in list(self.clients):
-            try:
-                writer.close()
-            except Exception:
-                pass
+            self._safe_writer_close(writer)
         self.clients.clear()
 
         self.stop_serial_workers()
 
     def request_stop(self):
+        """Signal all loops/workers to stop and close the listening server."""
         self.stop_event.set()
         if self.loop is not None:
             self.loop.call_soon_threadsafe(self._close_server)
 
     def _close_server(self):
+        """Close the telnet server socket if it exists."""
         if self.server is not None:
             self.server.close()
 
     def _open_serial(self):
+        """Open and return a configured serial handle."""
         return serial.Serial(
             self.args.serial,
             self.args.baud,
@@ -169,20 +179,22 @@ class SerialTelnetRepeater:
         )
 
     def _close_serial_handle(self, ser):
+        """Best-effort close for a serial handle."""
         try:
             ser.cancel_read()
-        except Exception:
+        except (AttributeError, OSError, serial.SerialException):
             pass
         try:
             ser.cancel_write()
-        except Exception:
+        except (AttributeError, OSError, serial.SerialException):
             pass
         try:
             ser.close()
-        except Exception:
+        except (OSError, serial.SerialException):
             pass
 
     def _disconnect_serial(self, reason=None):
+        """Detach current serial handle and optionally notify on loss."""
         with self.serial_lock:
             ser = self.ser
             self.ser = None
@@ -202,6 +214,7 @@ class SerialTelnetRepeater:
         self._close_serial_handle(ser)
 
     def _get_or_reconnect_serial(self):
+        """Return an open serial handle, reconnecting until available/stop."""
         while not self.stop_event.is_set():
             with self.serial_lock:
                 current = self.ser
@@ -242,12 +255,14 @@ class SerialTelnetRepeater:
         return None
 
     def start_serial_workers(self):
+        """Start serial RX and TX worker threads."""
         self.read_thread = threading.Thread(target=self.serial_read_worker, daemon=True)
         self.write_thread = threading.Thread(target=self.serial_write_worker, daemon=True)
         self.read_thread.start()
         self.write_thread.start()
 
     def stop_serial_workers(self):
+        """Stop serial workers and wait briefly for thread exit."""
         self.stop_event.set()
 
         try:
@@ -263,6 +278,7 @@ class SerialTelnetRepeater:
             self.write_thread.join(timeout=2.0)
 
     def serial_read_worker(self):
+        """Read from serial and broadcast payload to all connected clients."""
         while not self.stop_event.is_set():
             ser = self._get_or_reconnect_serial()
             if ser is None:
@@ -287,6 +303,7 @@ class SerialTelnetRepeater:
                 self.loop.call_soon_threadsafe(self.broadcast_to_clients, data)
 
     def serial_write_worker(self):
+        """Write client payloads to serial, reconnecting on serial failures."""
         while not self.stop_event.is_set():
             try:
                 data = self.serial_write_queue.get(timeout=0.25)
@@ -314,6 +331,7 @@ class SerialTelnetRepeater:
                     time.sleep(self.args.serial_reconnect_delay)
 
     def broadcast_to_clients(self, data):
+        """Send bytes to every connected client and drop dead connections."""
         dead_clients = []
         for writer in list(self.clients):
             if writer.is_closing():
@@ -321,17 +339,15 @@ class SerialTelnetRepeater:
                 continue
             try:
                 writer.write(data)
-            except Exception:
+            except (ConnectionError, OSError, RuntimeError):
                 dead_clients.append(writer)
 
         for writer in dead_clients:
             self.clients.discard(writer)
-            try:
-                writer.close()
-            except Exception:
-                pass
+            self._safe_writer_close(writer)
 
     def _notify_clients(self, message):
+        """Schedule a lightweight in-band status message to all clients."""
         if self.loop is None:
             return
         try:
@@ -340,7 +356,23 @@ class SerialTelnetRepeater:
             # Event loop may already be shutting down.
             pass
 
+    def _safe_writer_close(self, writer):
+        """Best-effort close for a Telnet writer."""
+        try:
+            writer.close()
+        except (ConnectionError, OSError, RuntimeError):
+            pass
+
+    async def _safe_writer_close_wait(self, writer):
+        """Best-effort close + wait-closed for a Telnet writer."""
+        try:
+            writer.close()
+            await writer.wait_closed()
+        except (ConnectionError, OSError, RuntimeError):
+            pass
+
     async def shell(self, reader, writer):
+        """Handle one Telnet client session."""
         peer = writer.get_extra_info("peername")
         self.clients.add(writer)
         logging.info("Client connected: %s", format_peer(peer))
@@ -351,7 +383,7 @@ class SerialTelnetRepeater:
             writer.write(SERIAL_LOST_NOTICE)
             try:
                 await writer.drain()
-            except Exception:
+            except (ConnectionError, OSError, RuntimeError):
                 pass
 
         try:
@@ -369,15 +401,12 @@ class SerialTelnetRepeater:
                     break
         finally:
             self.clients.discard(writer)
-            try:
-                writer.close()
-                await writer.wait_closed()
-            except Exception:
-                pass
+            await self._safe_writer_close_wait(writer)
             logging.info("Client disconnected: %s", format_peer(peer))
 
 
 def main():
+    """Program entrypoint."""
     args = parse_args()
     logging.basicConfig(
         level=getattr(logging, args.log_level),
@@ -387,6 +416,7 @@ def main():
     repeater = SerialTelnetRepeater(args)
 
     def handle_signal(_signum, _frame):
+        """Signal callback: request a clean asynchronous shutdown."""
         repeater.request_stop()
 
     signal.signal(signal.SIGINT, handle_signal)
