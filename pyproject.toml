@@ -1,0 +1,10 @@
+[project]
+name = "ser-split"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "pyserial>=3.5",
+    "telnetlib3>=4.0.2",
+]
