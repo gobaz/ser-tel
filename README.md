@@ -34,13 +34,25 @@ It uses `pyserial` for serial I/O and `telnetlib3` for Telnet protocol handling.
   - `pyserial>=3.5`
   - `telnetlib3>=4.0.2`
 
-## Quick Start
+## Quick Start (uv)
 
-This project uses `uv`.
+This project is managed with `uv`, so this is the recommended workflow:
 
 ```bash
 uv sync
 UV_CACHE_DIR=/tmp/uv-cache uv run python ser-tel.py --serial /dev/ttyUSB0 --baud 115200
+```
+
+## Run Without uv
+
+You can run the script with standard Python tooling too.
+`requirements.txt` contains the runtime dependencies (`pyserial`, `telnetlib3`).
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+python ser-tel.py --serial /dev/ttyUSB0 --baud 115200
 ```
 
 By default, server listens on `127.0.0.1:2000`.
@@ -52,6 +64,8 @@ telnet 127.0.0.1 2000
 ```
 
 ## Common Usage
+
+Using `uv` workflow:
 
 Default low-latency mode:
 
