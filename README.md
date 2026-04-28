@@ -12,10 +12,18 @@ It uses `pyserial` for serial I/O and `telnetlib3` for Telnet protocol handling.
 ## Features
 
 - Multi-client Telnet server
+- Multiple clients can watch and interact with the same serial session at once
+- Easy to automate from scripts and CI jobs (plain TCP/Telnet endpoint)
 - Low-latency serial mode enabled by default
 - Safe default bind (`127.0.0.1`)
 - Graceful shutdown on `Ctrl+C` / `SIGTERM`
 - Bounded queue for client -> serial backpressure
+
+## Why It's Useful
+
+- Team debugging: one person can type commands while others monitor live output.
+- Fast automation: use shell scripts, Python, or test harnesses against a stable TCP port instead of direct serial device handling.
+- Tool interoperability: works with standard clients (`telnet`, terminal apps, custom TCP clients).
 
 ## Requirements
 
