@@ -15,6 +15,8 @@ It uses `pyserial` for serial I/O and `telnetlib3` for Telnet protocol handling.
 - Multiple clients can watch and interact with the same serial session at once
 - Easy to automate from scripts and CI jobs (plain TCP/Telnet endpoint)
 - Low-latency serial mode enabled by default
+- Automatic serial reconnect when device disappears/reappears
+- Clients get short in-band notices: `[serial] lost` and `[serial] reconnected`
 - Safe default bind (`127.0.0.1`)
 - Graceful shutdown on `Ctrl+C` / `SIGTERM`
 - Bounded queue for client -> serial backpressure
@@ -88,6 +90,7 @@ UV_CACHE_DIR=/tmp/uv-cache uv run python ser-tel.py \
 --allow-remote
 --chunk-size CHUNK_SIZE
 --serial-write-queue-size SERIAL_WRITE_QUEUE_SIZE
+--serial-reconnect-delay SERIAL_RECONNECT_DELAY
 --unbuffered-serial / --no-unbuffered-serial
 --log-level {DEBUG,INFO,WARNING,ERROR}
 ```
@@ -111,6 +114,7 @@ UV_CACHE_DIR=/tmp/uv-cache uv run python ser-tel.py --help
   - Ensure your user has serial device access (often `dialout` group on Linux)
 - No data received:
   - Verify baud rate and serial settings on the target device
+  - If USB serial was unplugged, reconnect it and wait for auto-reconnect attempts
   - Test raw serial quickly with `serial.tools.miniterm` or `screen`
 - Telnet connects but shell is weird:
   - Confirm remote endpoint over serial is actually a shell/console

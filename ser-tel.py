@@ -13,6 +13,9 @@ from typing import Optional
 import serial
 import telnetlib3
 
+SERIAL_LOST_NOTICE = b"\r\n[serial] lost\r\n"
+SERIAL_RECONNECTED_NOTICE = b"\r\n[serial] reconnected\r\n"
+
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -44,6 +47,12 @@ def parse_args():
         help="Queue depth for client->serial data.",
     )
     parser.add_argument(
+        "--serial-reconnect-delay",
+        type=float,
+        default=1.0,
+        help="Seconds between serial reconnect attempts after disconnect/open failure.",
+    )
+    parser.add_argument(
         "--unbuffered-serial",
         action=argparse.BooleanOptionalAction,
         default=True,
@@ -69,6 +78,8 @@ def parse_args():
         parser.error("--chunk-size must be > 0")
     if args.serial_write_queue_size <= 0:
         parser.error("--serial-write-queue-size must be > 0")
+    if args.serial_reconnect_delay <= 0:
+        parser.error("--serial-reconnect-delay must be > 0")
 
     return args
 
@@ -98,12 +109,14 @@ class SerialTelnetRepeater:
         self.loop: Optional[asyncio.AbstractEventLoop] = None
         self.server = None
         self.ser: Optional[serial.Serial] = None
+        self.serial_lock = threading.Lock()
+        self._next_reconnect_log_at = 0.0
+        self._serial_was_lost = False
         self.read_thread: Optional[threading.Thread] = None
         self.write_thread: Optional[threading.Thread] = None
 
     async def run(self):
         self.loop = asyncio.get_running_loop()
-        self.open_serial()
         self.start_serial_workers()
 
         self.server = await telnetlib3.create_server(
@@ -147,19 +160,86 @@ class SerialTelnetRepeater:
         if self.server is not None:
             self.server.close()
 
-    def open_serial(self):
-        self.ser = serial.Serial(
+    def _open_serial(self):
+        return serial.Serial(
             self.args.serial,
             self.args.baud,
             timeout=0.0 if self.args.unbuffered_serial else 1.0,
             write_timeout=1.0,
         )
-        logging.info(
-            "Opened serial %s @ %d (%s mode)",
-            self.args.serial,
-            self.args.baud,
-            "unbuffered" if self.args.unbuffered_serial else "buffered",
-        )
+
+    def _close_serial_handle(self, ser):
+        try:
+            ser.cancel_read()
+        except Exception:
+            pass
+        try:
+            ser.cancel_write()
+        except Exception:
+            pass
+        try:
+            ser.close()
+        except Exception:
+            pass
+
+    def _disconnect_serial(self, reason=None):
+        with self.serial_lock:
+            ser = self.ser
+            self.ser = None
+
+        if ser is None:
+            return
+
+        if reason:
+            self._serial_was_lost = True
+            logging.warning(
+                "Serial disconnected (%s). Reconnecting every %.1fs...",
+                reason,
+                self.args.serial_reconnect_delay,
+            )
+            self._notify_clients(SERIAL_LOST_NOTICE)
+
+        self._close_serial_handle(ser)
+
+    def _get_or_reconnect_serial(self):
+        while not self.stop_event.is_set():
+            with self.serial_lock:
+                current = self.ser
+                if current is not None and current.is_open:
+                    return current
+
+            try:
+                opened = self._open_serial()
+            except (serial.SerialException, OSError, ValueError) as exc:
+                now = time.monotonic()
+                if now >= self._next_reconnect_log_at:
+                    logging.warning(
+                        "Serial unavailable (%s). Retrying in %.1fs...",
+                        exc,
+                        self.args.serial_reconnect_delay,
+                    )
+                    self._next_reconnect_log_at = now + 5.0
+                time.sleep(self.args.serial_reconnect_delay)
+                continue
+
+            with self.serial_lock:
+                if self.ser is None:
+                    self.ser = opened
+                    self._next_reconnect_log_at = 0.0
+                    logging.info(
+                        "Serial connected: %s @ %d (%s mode)",
+                        self.args.serial,
+                        self.args.baud,
+                        "unbuffered" if self.args.unbuffered_serial else "buffered",
+                    )
+                    if self._serial_was_lost:
+                        self._serial_was_lost = False
+                        self._notify_clients(SERIAL_RECONNECTED_NOTICE)
+                    return opened
+
+            self._close_serial_handle(opened)
+
+        return None
 
     def start_serial_workers(self):
         self.read_thread = threading.Thread(target=self.serial_read_worker, daemon=True)
@@ -175,50 +255,38 @@ class SerialTelnetRepeater:
         except queue.Full:
             pass
 
-        if self.ser is not None:
-            try:
-                self.ser.cancel_read()
-            except Exception:
-                pass
-            try:
-                self.ser.cancel_write()
-            except Exception:
-                pass
+        self._disconnect_serial()
 
         if self.read_thread is not None:
             self.read_thread.join(timeout=2.0)
         if self.write_thread is not None:
             self.write_thread.join(timeout=2.0)
 
-        if self.ser is not None:
-            try:
-                self.ser.close()
-            except Exception:
-                pass
-
     def serial_read_worker(self):
-        assert self.ser is not None
         while not self.stop_event.is_set():
+            ser = self._get_or_reconnect_serial()
+            if ser is None:
+                return
+
             try:
                 if self.args.unbuffered_serial:
-                    first = self.ser.read(1)
+                    first = ser.read(1)
                     if not first:
                         time.sleep(0.001)
                         continue
-                    waiting = self.ser.in_waiting
-                    data = first + (self.ser.read(waiting) if waiting else b"")
+                    waiting = ser.in_waiting
+                    data = first + (ser.read(waiting) if waiting else b"")
                 else:
-                    data = self.ser.read(self.args.chunk_size)
-            except serial.SerialException as exc:
-                logging.error("Serial read failed: %s", exc)
-                self.request_stop()
-                return
+                    data = ser.read(self.args.chunk_size)
+            except (serial.SerialException, OSError) as exc:
+                self._disconnect_serial(reason=f"read error: {exc}")
+                time.sleep(self.args.serial_reconnect_delay)
+                continue
 
             if data and self.loop is not None:
                 self.loop.call_soon_threadsafe(self.broadcast_to_clients, data)
 
     def serial_write_worker(self):
-        assert self.ser is not None
         while not self.stop_event.is_set():
             try:
                 data = self.serial_write_queue.get(timeout=0.25)
@@ -228,16 +296,22 @@ class SerialTelnetRepeater:
             if data is None:
                 return
 
-            try:
-                self.ser.write(data)
-                if self.args.unbuffered_serial:
-                    self.ser.flush()
-            except serial.SerialTimeoutException:
-                logging.warning("Serial write timeout; dropping payload")
-            except serial.SerialException as exc:
-                logging.error("Serial write failed: %s", exc)
-                self.request_stop()
-                return
+            while not self.stop_event.is_set():
+                ser = self._get_or_reconnect_serial()
+                if ser is None:
+                    return
+
+                try:
+                    ser.write(data)
+                    if self.args.unbuffered_serial:
+                        ser.flush()
+                    break
+                except serial.SerialTimeoutException:
+                    logging.warning("Serial write timeout; dropping payload")
+                    break
+                except (serial.SerialException, OSError) as exc:
+                    self._disconnect_serial(reason=f"write error: {exc}")
+                    time.sleep(self.args.serial_reconnect_delay)
 
     def broadcast_to_clients(self, data):
         dead_clients = []
@@ -257,10 +331,28 @@ class SerialTelnetRepeater:
             except Exception:
                 pass
 
+    def _notify_clients(self, message):
+        if self.loop is None:
+            return
+        try:
+            self.loop.call_soon_threadsafe(self.broadcast_to_clients, message)
+        except RuntimeError:
+            # Event loop may already be shutting down.
+            pass
+
     async def shell(self, reader, writer):
         peer = writer.get_extra_info("peername")
         self.clients.add(writer)
         logging.info("Client connected: %s", format_peer(peer))
+
+        with self.serial_lock:
+            serial_up = self.ser is not None and self.ser.is_open
+        if not serial_up:
+            writer.write(SERIAL_LOST_NOTICE)
+            try:
+                await writer.drain()
+            except Exception:
+                pass
 
         try:
             while not self.stop_event.is_set() and not writer.is_closing():
