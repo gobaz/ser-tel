@@ -1,4 +1,4 @@
-# ser-split
+# ser-tel ser-split
 
 Lightweight serial-to-multi-client Telnet bridge in Python.
 
@@ -40,7 +40,7 @@ This project is managed with `uv`, so this is the recommended workflow:
 
 ```bash
 uv sync
-UV_CACHE_DIR=/tmp/uv-cache uv run python ser-tel.py --serial /dev/ttyUSB0 --baud 115200
+uv run python ser-tel.py --serial /dev/ttyUSB0 --baud 115200
 ```
 
 ## Run Without uv
@@ -70,7 +70,7 @@ Using `uv` workflow:
 Default low-latency mode:
 
 ```bash
-UV_CACHE_DIR=/tmp/uv-cache uv run python ser-tel.py \
+uv run python ser-tel.py \
   --serial /dev/ttyUSB0 \
   --baud 115200
 ```
@@ -78,7 +78,7 @@ UV_CACHE_DIR=/tmp/uv-cache uv run python ser-tel.py \
 Disable unbuffered serial mode:
 
 ```bash
-UV_CACHE_DIR=/tmp/uv-cache uv run python ser-tel.py \
+uv run python ser-tel.py \
   --serial /dev/ttyUSB0 \
   --baud 115200 \
   --no-unbuffered-serial
@@ -87,7 +87,7 @@ UV_CACHE_DIR=/tmp/uv-cache uv run python ser-tel.py \
 Expose on all interfaces (trusted networks only):
 
 ```bash
-UV_CACHE_DIR=/tmp/uv-cache uv run python ser-tel.py \
+uv run python ser-tel.py \
   --serial /dev/ttyUSB0 \
   --baud 115200 \
   --host 0.0.0.0 \
@@ -112,7 +112,7 @@ UV_CACHE_DIR=/tmp/uv-cache uv run python ser-tel.py \
 See full help:
 
 ```bash
-UV_CACHE_DIR=/tmp/uv-cache uv run python ser-tel.py --help
+uv run python ser-tel.py --help
 ```
 
 ## Security Notes
