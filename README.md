@@ -40,7 +40,24 @@ This project is managed with `uv`, so this is the recommended workflow:
 
 ```bash
 uv sync
-UV_CACHE_DIR=/tmp/uv-cache uv run ser-tel --serial /dev/ttyUSB0 --baud 115200
+uv run ser-tel --serial /dev/ttyUSB0 --baud 115200
+```
+
+## Install Command Globally (uv)
+
+Install `ser-tel` as a persistent shell command:
+
+```bash
+uv tool install -e .
+uv tool update-shell
+ser-tel --help
+```
+
+Useful maintenance commands:
+
+```bash
+uv tool upgrade ser-split
+uv tool uninstall ser-split
 ```
 
 ## Run Without uv
@@ -71,7 +88,7 @@ Using `uv` workflow:
 Default low-latency mode:
 
 ```bash
-UV_CACHE_DIR=/tmp/uv-cache uv run ser-tel \
+uv run ser-tel \
   --serial /dev/ttyUSB0 \
   --baud 115200
 ```
@@ -79,7 +96,7 @@ UV_CACHE_DIR=/tmp/uv-cache uv run ser-tel \
 Use buffered serial mode:
 
 ```bash
-UV_CACHE_DIR=/tmp/uv-cache uv run ser-tel \
+uv run ser-tel \
   --serial /dev/ttyUSB0 \
   --baud 115200 \
   --buffered
@@ -88,7 +105,7 @@ UV_CACHE_DIR=/tmp/uv-cache uv run ser-tel \
 Expose on all interfaces (trusted networks only):
 
 ```bash
-UV_CACHE_DIR=/tmp/uv-cache uv run ser-tel \
+uv run ser-tel \
   --serial /dev/ttyUSB0 \
   --baud 115200 \
   --host 0.0.0.0
@@ -111,7 +128,7 @@ UV_CACHE_DIR=/tmp/uv-cache uv run ser-tel \
 See full help:
 
 ```bash
-UV_CACHE_DIR=/tmp/uv-cache uv run ser-tel --help
+uv run ser-tel --help
 ```
 
 ## Security Notes
@@ -128,7 +145,7 @@ UV_CACHE_DIR=/tmp/uv-cache uv run ser-tel --help
 - No data received:
   - Verify baud rate and serial settings on the target device
   - If USB serial was unplugged, reconnect it and wait for auto-reconnect attempts
-  - Test raw serial quickly with `serial.tools.miniterm` or `screen`
+  - Test raw serial quickly with `picocom`, `screen` etc.
 - Telnet connects but shell is weird:
   - Confirm remote endpoint over serial is actually a shell/console
   - Try resetting terminal on remote side (`stty sane`, TERM settings) if needed

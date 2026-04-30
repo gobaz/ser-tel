@@ -69,7 +69,10 @@ def parse_args():
         "--serial-reconnect-delay",
         type=float,
         default=1.0,
-        help="Seconds between serial reconnect attempts after disconnect/open failure (default: 1.0).",
+        help=(
+            "Seconds between serial reconnect attempts after disconnect/open "
+            "failure (default: 1.0)."
+        ),
     )
     unbuffered_group = parser.add_mutually_exclusive_group()
     unbuffered_group.add_argument(
