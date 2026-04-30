@@ -1,8 +1,8 @@
-# ser-tel ser-split
+# ser-split
 
 Lightweight serial-to-multi-client Telnet bridge in Python.
 
-`ser-tel.py` opens one serial port and shares it with multiple Telnet clients:
+`ser-tel` opens one serial port and shares it with multiple Telnet clients:
 
 - Client input -> serial TX
 - Serial RX -> broadcast to all connected clients
@@ -40,7 +40,7 @@ This project is managed with `uv`, so this is the recommended workflow:
 
 ```bash
 uv sync
-uv run python ser-tel.py --serial /dev/ttyUSB0 --baud 115200
+UV_CACHE_DIR=/tmp/uv-cache uv run ser-tel --serial /dev/ttyUSB0 --baud 115200
 ```
 
 ## Run Without uv
@@ -52,7 +52,8 @@ You can run the script with standard Python tooling too.
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
-python ser-tel.py --serial /dev/ttyUSB0 --baud 115200
+python -m pip install -e .
+ser-tel --serial /dev/ttyUSB0 --baud 115200
 ```
 
 By default, server listens on `127.0.0.1:2000`.
@@ -70,7 +71,7 @@ Using `uv` workflow:
 Default low-latency mode:
 
 ```bash
-uv run python ser-tel.py \
+UV_CACHE_DIR=/tmp/uv-cache uv run ser-tel \
   --serial /dev/ttyUSB0 \
   --baud 115200
 ```
@@ -78,7 +79,7 @@ uv run python ser-tel.py \
 Disable unbuffered serial mode:
 
 ```bash
-uv run python ser-tel.py \
+UV_CACHE_DIR=/tmp/uv-cache uv run ser-tel \
   --serial /dev/ttyUSB0 \
   --baud 115200 \
   --no-unbuffered-serial
@@ -87,7 +88,7 @@ uv run python ser-tel.py \
 Expose on all interfaces (trusted networks only):
 
 ```bash
-uv run python ser-tel.py \
+UV_CACHE_DIR=/tmp/uv-cache uv run ser-tel \
   --serial /dev/ttyUSB0 \
   --baud 115200 \
   --host 0.0.0.0 \
@@ -112,7 +113,7 @@ uv run python ser-tel.py \
 See full help:
 
 ```bash
-uv run python ser-tel.py --help
+UV_CACHE_DIR=/tmp/uv-cache uv run ser-tel --help
 ```
 
 ## Security Notes

@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "ser-split"
 version = "0.1.0"
@@ -9,11 +13,17 @@ dependencies = [
     "telnetlib3>=4.0.2",
 ]
 
+[project.scripts]
+ser-tel = "ser_tel:main"
+
+[tool.setuptools]
+py-modules = ["ser_tel"]
+
 [tool.pylint.main]
 py-version = "3.12"
 
 [tool.pylint.basic]
-# Allow script filenames like ser-tel.py while still enforcing lowercase style.
+# Allow lowercase module names with optional underscores/hyphens.
 module-rgx = "[a-z_][a-z0-9_-]*$"
 
 [tool.pylint.design]
