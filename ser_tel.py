@@ -3,7 +3,6 @@
 
 import argparse
 import asyncio
-import ipaddress
 import logging
 import queue
 import signal
@@ -21,66 +20,82 @@ SERIAL_RECONNECTED_NOTICE = b"\r\n[serial] reconnected\r\n"
 def parse_args():
     """Parse and validate CLI arguments."""
     parser = argparse.ArgumentParser(
-        description="Share one serial port with multiple telnet clients."
+        description="Share one serial port with multiple telnet clients.",
+        add_help=False,
     )
-    parser.add_argument("--serial", default="/dev/ttyUSB0", help="Serial device path.")
-    parser.add_argument("--baud", type=int, default=115200, help="Serial baud rate.")
+    parser.add_argument("-?", "--help", action="help", help="Show this help message and exit.")
     parser.add_argument(
+        "-p",
+        "--serial",
+        default="/dev/ttyUSB0",
+        help="Serial device path (default: /dev/ttyUSB0).",
+    )
+    parser.add_argument(
+        "-B",
+        "--baud",
+        type=int,
+        default=115200,
+        help="Serial baud rate (default: 115200).",
+    )
+    parser.add_argument(
+        "-h",
         "--host",
         default="127.0.0.1",
-        help="Bind host (default: loopback only for safety).",
-    )
-    parser.add_argument("--port", type=int, default=2000, help="TCP bind port.")
-    parser.add_argument(
-        "--allow-remote",
-        action="store_true",
-        help="Allow binding to a non-loopback host/address.",
+        help="Bind host/IP address (default: 127.0.0.1).",
     )
     parser.add_argument(
+        "-P",
+        "--port",
+        type=int,
+        default=2000,
+        help="TCP bind port (default: 2000).",
+    )
+    parser.add_argument(
+        "-c",
         "--chunk-size",
         type=int,
         default=1024,
-        help="Read/write chunk size in bytes.",
+        help="Read/write chunk size in bytes (default: 1024).",
     )
     parser.add_argument(
+        "-q",
         "--serial-write-queue-size",
         type=int,
         default=1024,
-        help="Queue depth for client->serial data.",
+        help="Queue depth for client->serial data (default: 1024).",
     )
     parser.add_argument(
+        "-d",
         "--serial-reconnect-delay",
         type=float,
         default=1.0,
-        help="Seconds between serial reconnect attempts after disconnect/open failure.",
+        help="Seconds between serial reconnect attempts after disconnect/open failure (default: 1.0).",
     )
     unbuffered_group = parser.add_mutually_exclusive_group()
     unbuffered_group.add_argument(
+        "-u",
         "--unbuffered-serial",
         dest="unbuffered_serial",
         action="store_true",
-        help="Minimize serial buffering/latency (default: enabled).",
+        help="Minimize serial buffering/latency (default mode).",
     )
     unbuffered_group.add_argument(
-        "--no-unbuffered-serial",
+        "-b",
+        "--buffered",
         dest="unbuffered_serial",
         action="store_false",
-        help="Disable unbuffered serial mode.",
+        help="Use buffered serial mode (default: disabled).",
     )
     parser.set_defaults(unbuffered_serial=True)
     parser.add_argument(
+        "-l",
         "--log-level",
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
         default="INFO",
-        help="Log verbosity.",
+        help="Log verbosity (default: INFO).",
     )
     args = parser.parse_args()
 
-    if not args.allow_remote and not is_loopback_host(args.host):
-        parser.error(
-            "Refusing non-loopback bind without --allow-remote. "
-            "Use --allow-remote only on trusted networks."
-        )
     if args.chunk_size <= 0:
         parser.error("--chunk-size must be > 0")
     if args.serial_write_queue_size <= 0:
@@ -89,16 +104,6 @@ def parse_args():
         parser.error("--serial-reconnect-delay must be > 0")
 
     return args
-
-
-def is_loopback_host(host):
-    """Return True when *host* is loopback-like (`localhost` or 127/::1)."""
-    if host in ("localhost",):
-        return True
-    try:
-        return ipaddress.ip_address(host).is_loopback
-    except ValueError:
-        return False
 
 
 def format_peer(peername):

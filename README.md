@@ -76,13 +76,13 @@ UV_CACHE_DIR=/tmp/uv-cache uv run ser-tel \
   --baud 115200
 ```
 
-Disable unbuffered serial mode:
+Use buffered serial mode:
 
 ```bash
 UV_CACHE_DIR=/tmp/uv-cache uv run ser-tel \
   --serial /dev/ttyUSB0 \
   --baud 115200 \
-  --no-unbuffered-serial
+  --buffered
 ```
 
 Expose on all interfaces (trusted networks only):
@@ -91,8 +91,7 @@ Expose on all interfaces (trusted networks only):
 UV_CACHE_DIR=/tmp/uv-cache uv run ser-tel \
   --serial /dev/ttyUSB0 \
   --baud 115200 \
-  --host 0.0.0.0 \
-  --allow-remote
+  --host 0.0.0.0
 ```
 
 ## CLI Options
@@ -102,11 +101,10 @@ UV_CACHE_DIR=/tmp/uv-cache uv run ser-tel \
 --baud BAUD
 --host HOST
 --port PORT
---allow-remote
 --chunk-size CHUNK_SIZE
 --serial-write-queue-size SERIAL_WRITE_QUEUE_SIZE
 --serial-reconnect-delay SERIAL_RECONNECT_DELAY
---unbuffered-serial / --no-unbuffered-serial
+--unbuffered-serial / --buffered
 --log-level {DEBUG,INFO,WARNING,ERROR}
 ```
 
@@ -120,7 +118,7 @@ UV_CACHE_DIR=/tmp/uv-cache uv run ser-tel --help
 
 - Telnet is unencrypted.
 - Default bind is loopback for safety.
-- If you use `--allow-remote`, restrict access with firewall/VPN/isolated network.
+- If you bind to a non-loopback host (for example `0.0.0.0`), restrict access with firewall/VPN/isolated network.
 
 ## Troubleshooting
 
