@@ -48,7 +48,7 @@ wheels = [
 [[package]]
 name = "ser-split"
 version = "0.1.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "pyserial" },
     { name = "telnetlib3" },
