@@ -32,6 +32,18 @@ class BridgeConfig:
     port: int
 
 
+@dataclass
+class SerialConnectionState:
+    """Mutable state shared by the serial worker threads."""
+
+    serial_lock: threading.Lock
+    ser: Optional[serial.Serial] = None
+    next_reconnect_log_at: float = 0.0
+    serial_was_lost: bool = False
+    read_thread: Optional[threading.Thread] = None
+    write_thread: Optional[threading.Thread] = None
+
+
 def port_for_device(device: str) -> int:
     """Map ttyUSBN to 2000 + N and ttyACMN to 3000 + N."""
     device_name = Path(device).name
@@ -175,12 +187,7 @@ class SerialTelnetRepeater:
 
         self.loop: Optional[asyncio.AbstractEventLoop] = None
         self.server = None
-        self.ser: Optional[serial.Serial] = None
-        self.serial_lock = threading.Lock()
-        self._next_reconnect_log_at = 0.0
-        self._serial_was_lost = False
-        self.read_thread: Optional[threading.Thread] = None
-        self.write_thread: Optional[threading.Thread] = None
+        self.serial_state = SerialConnectionState(serial_lock=threading.Lock())
 
     async def run(self):
         """Start workers and serve Telnet clients until stop is requested."""
@@ -257,15 +264,15 @@ class SerialTelnetRepeater:
 
     def _disconnect_serial(self, reason=None):
         """Detach current serial handle and optionally notify on loss."""
-        with self.serial_lock:
-            ser = self.ser
-            self.ser = None
+        with self.serial_state.serial_lock:
+            ser = self.serial_state.ser
+            self.serial_state.ser = None
 
         if ser is None:
             return
 
         if reason:
-            self._serial_was_lost = True
+            self.serial_state.serial_was_lost = True
             logging.warning(
                 "%s: serial disconnected (%s). Reconnecting every %.1fs...",
                 self.bridge.device,
@@ -279,8 +286,8 @@ class SerialTelnetRepeater:
     def _get_or_reconnect_serial(self):
         """Return an open serial handle, reconnecting until available/stop."""
         while not self.stop_event.is_set():
-            with self.serial_lock:
-                current = self.ser
+            with self.serial_state.serial_lock:
+                current = self.serial_state.ser
                 if current is not None and current.is_open:
                     return current
 
@@ -288,29 +295,29 @@ class SerialTelnetRepeater:
                 opened = self._open_serial()
             except (serial.SerialException, OSError, ValueError) as exc:
                 now = time.monotonic()
-                if now >= self._next_reconnect_log_at:
+                if now >= self.serial_state.next_reconnect_log_at:
                     logging.warning(
                         "%s: serial unavailable (%s). Retrying in %.1fs...",
                         self.bridge.device,
                         exc,
                         self.args.serial_reconnect_delay,
                     )
-                    self._next_reconnect_log_at = now + 5.0
+                    self.serial_state.next_reconnect_log_at = now + 5.0
                 time.sleep(self.args.serial_reconnect_delay)
                 continue
 
-            with self.serial_lock:
-                if self.ser is None:
-                    self.ser = opened
-                    self._next_reconnect_log_at = 0.0
+            with self.serial_state.serial_lock:
+                if self.serial_state.ser is None:
+                    self.serial_state.ser = opened
+                    self.serial_state.next_reconnect_log_at = 0.0
                     logging.info(
                         "Serial connected: %s @ %d (%s mode)",
                         self.bridge.device,
                         self.bridge.baud,
                         "unbuffered" if self.args.unbuffered_serial else "buffered",
                     )
-                    if self._serial_was_lost:
-                        self._serial_was_lost = False
+                    if self.serial_state.serial_was_lost:
+                        self.serial_state.serial_was_lost = False
                         self._notify_clients(SERIAL_RECONNECTED_NOTICE)
                     return opened
 
@@ -320,10 +327,14 @@ class SerialTelnetRepeater:
 
     def start_serial_workers(self):
         """Start serial RX and TX worker threads."""
-        self.read_thread = threading.Thread(target=self.serial_read_worker, daemon=True)
-        self.write_thread = threading.Thread(target=self.serial_write_worker, daemon=True)
-        self.read_thread.start()
-        self.write_thread.start()
+        self.serial_state.read_thread = threading.Thread(
+            target=self.serial_read_worker, daemon=True
+        )
+        self.serial_state.write_thread = threading.Thread(
+            target=self.serial_write_worker, daemon=True
+        )
+        self.serial_state.read_thread.start()
+        self.serial_state.write_thread.start()
 
     def stop_serial_workers(self):
         """Stop serial workers and wait briefly for thread exit."""
@@ -336,10 +347,10 @@ class SerialTelnetRepeater:
 
         self._disconnect_serial()
 
-        if self.read_thread is not None:
-            self.read_thread.join(timeout=2.0)
-        if self.write_thread is not None:
-            self.write_thread.join(timeout=2.0)
+        if self.serial_state.read_thread is not None:
+            self.serial_state.read_thread.join(timeout=2.0)
+        if self.serial_state.write_thread is not None:
+            self.serial_state.write_thread.join(timeout=2.0)
 
     def serial_read_worker(self):
         """Read from serial and broadcast payload to all connected clients."""
@@ -441,8 +452,10 @@ class SerialTelnetRepeater:
         self.clients.add(writer)
         logging.info("%s: client connected: %s", self.bridge.device, format_peer(peer))
 
-        with self.serial_lock:
-            serial_up = self.ser is not None and self.ser.is_open
+        with self.serial_state.serial_lock:
+            serial_up = (
+                self.serial_state.ser is not None and self.serial_state.ser.is_open
+            )
         if not serial_up:
             writer.write(SERIAL_LOST_NOTICE)
             try:
