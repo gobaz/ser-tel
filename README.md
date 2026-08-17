@@ -2,7 +2,8 @@
 
 Lightweight serial-to-multi-client Telnet bridge in Python.
 
-`ser-tel` opens one serial port and shares it with multiple Telnet clients:
+`ser-tel` opens one or more serial ports and shares each one with multiple
+Telnet clients:
 
 - Client input -> serial TX
 - Serial RX -> broadcast to all connected clients
@@ -12,6 +13,8 @@ It uses `pyserial` for serial I/O and `telnetlib3` for Telnet protocol handling.
 ## Features
 
 - Multi-client Telnet server
+- Multi-serial support: repeat `--tty` to create an independent bridge per device
+- Predictable TCP ports: `/dev/ttyUSB0` uses `2000`; `/dev/ttyACM0` uses `3000`
 - Multiple clients can watch and interact with the same serial session at once
 - Easy to automate from scripts and CI jobs (plain TCP/Telnet endpoint)
 - Low-latency serial mode enabled by default
@@ -40,7 +43,7 @@ This project is managed with `uv`, so this is the recommended workflow:
 
 ```bash
 uv sync
-uv run ser-tel --serial /dev/ttyUSB0 --baud 115200
+uv run ser-tel --tty /dev/ttyUSB0 --baud 115200
 ```
 
 ## Install Command Globally (uv)
@@ -70,16 +73,39 @@ python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt
 python -m pip install -e .
-ser-tel --serial /dev/ttyUSB0 --baud 115200
+ser-tel --tty /dev/ttyUSB0 --baud 115200
 ```
 
-By default, server listens on `127.0.0.1:2000`.
+Without `--tty`, `ser-tel` starts bridges for `/dev/ttyUSB0`,
+`/dev/ttyUSB1`, and `/dev/ttyACM0`. They listen on `127.0.0.1:2000`,
+`127.0.0.1:2001`, and `127.0.0.1:3000`, respectively. Missing devices stay
+in their automatic reconnect loop until they become available.
 
 Connect from another terminal:
 
 ```bash
 telnet 127.0.0.1 2000
 ```
+
+## Multiple Serial Devices
+
+Repeat `--tty` for every device. Each device is served independently and
+uses a TCP port derived from its device number: `ttyUSBN` uses `2000 + N`, and
+`ttyACMN` uses `3000 + N`:
+
+```bash
+uv run ser-tel \
+  --tty /dev/ttyUSB0 \
+  --tty /dev/ttyACM0
+```
+
+This starts `/dev/ttyUSB0` at `127.0.0.1:2000` and `/dev/ttyACM0` at
+`127.0.0.1:3000`. The baud rate is `115200` by default and applies to every
+configured device; set a different shared value with `--baud`.
+
+Only `ttyUSBN` and `ttyACMN` device names are accepted because the suffix
+determines the TCP port. For example, `/dev/ttyUSB42` uses TCP port `2042` and
+`/dev/ttyACM42` uses TCP port `3042`.
 
 ## Common Usage
 
@@ -89,7 +115,7 @@ Default low-latency mode:
 
 ```bash
 uv run ser-tel \
-  --serial /dev/ttyUSB0 \
+  --tty /dev/ttyUSB0 \
   --baud 115200
 ```
 
@@ -97,7 +123,7 @@ Use buffered serial mode:
 
 ```bash
 uv run ser-tel \
-  --serial /dev/ttyUSB0 \
+  --tty /dev/ttyUSB0 \
   --baud 115200 \
   --buffered
 ```
@@ -106,7 +132,7 @@ Expose on all interfaces (trusted networks only):
 
 ```bash
 uv run ser-tel \
-  --serial /dev/ttyUSB0 \
+  --tty /dev/ttyUSB0 \
   --baud 115200 \
   --host 0.0.0.0
 ```
@@ -114,10 +140,9 @@ uv run ser-tel \
 ## CLI Options
 
 ```text
---serial SERIAL
+--tty TTY
 --baud BAUD
 --host HOST
---port PORT
 --chunk-size CHUNK_SIZE
 --serial-write-queue-size SERIAL_WRITE_QUEUE_SIZE
 --serial-reconnect-delay SERIAL_RECONNECT_DELAY

@@ -5,9 +5,12 @@ import argparse
 import asyncio
 import logging
 import queue
+import re
 import signal
 import threading
 import time
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 import serial
@@ -15,20 +18,55 @@ import telnetlib3
 
 SERIAL_LOST_NOTICE = b"\r\n[serial] lost\r\n"
 SERIAL_RECONNECTED_NOTICE = b"\r\n[serial] reconnected\r\n"
+TTYUSB_PORT_BASE = 2000
+TTYACM_PORT_BASE = 3000
+DEFAULT_TTY_DEVICES = ("/dev/ttyUSB0", "/dev/ttyUSB1", "/dev/ttyACM0")
+
+
+@dataclass(frozen=True)
+class BridgeConfig:
+    """Configuration for one independent serial-to-Telnet bridge."""
+
+    device: str
+    baud: int
+    port: int
+
+
+def port_for_device(device: str) -> int:
+    """Map ttyUSBN to 2000 + N and ttyACMN to 3000 + N."""
+    device_name = Path(device).name
+    match = re.fullmatch(r"tty(USB|ACM)(\d+)", device_name)
+    if match is None:
+        raise ValueError(
+            "device name must end in ttyUSBN or ttyACMN "
+            "(for example /dev/ttyUSB0 or /dev/ttyACM0)"
+        )
+
+    port_base = TTYUSB_PORT_BASE if match.group(1) == "USB" else TTYACM_PORT_BASE
+    port = port_base + int(match.group(2))
+    if port > 65535:
+        raise ValueError(f"derived TCP port {port} is outside the valid range")
+    return port
 
 
 def parse_args():
     """Parse and validate CLI arguments."""
     parser = argparse.ArgumentParser(
-        description="Share one serial port with multiple telnet clients.",
+        description="Share one or more serial ports with multiple Telnet clients.",
         add_help=False,
     )
     parser.add_argument("-?", "--help", action="help", help="Show this help message and exit.")
     parser.add_argument(
-        "-p",
-        "--serial",
-        default="/dev/ttyUSB0",
-        help="Serial device path (default: /dev/ttyUSB0).",
+        "-t",
+        "--tty",
+        action="append",
+        default=None,
+        metavar="DEVICE",
+        help=(
+            "TTY device path; repeat for multiple bridges. TCP port is "
+            "derived from the device name (ttyUSB0 -> 2000; ttyACM0 -> 3000). "
+            "Default: /dev/ttyUSB0, /dev/ttyUSB1, and /dev/ttyACM0."
+        ),
     )
     parser.add_argument(
         "-B",
@@ -42,13 +80,6 @@ def parse_args():
         "--host",
         default="127.0.0.1",
         help="Bind host/IP address (default: 127.0.0.1).",
-    )
-    parser.add_argument(
-        "-P",
-        "--port",
-        type=int,
-        default=2000,
-        help="TCP bind port (default: 2000).",
     )
     parser.add_argument(
         "-c",
@@ -101,10 +132,26 @@ def parse_args():
 
     if args.chunk_size <= 0:
         parser.error("--chunk-size must be > 0")
+    if args.baud <= 0:
+        parser.error("--baud must be > 0")
     if args.serial_write_queue_size <= 0:
         parser.error("--serial-write-queue-size must be > 0")
     if args.serial_reconnect_delay <= 0:
         parser.error("--serial-reconnect-delay must be > 0")
+
+    devices = args.tty or DEFAULT_TTY_DEVICES
+    try:
+        args.bridges = tuple(
+            BridgeConfig(device=device, baud=args.baud, port=port_for_device(device))
+            for device in devices
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
+
+    if len({bridge.device for bridge in args.bridges}) != len(args.bridges):
+        parser.error("each --tty device must be specified only once")
+    if len({bridge.port for bridge in args.bridges}) != len(args.bridges):
+        parser.error("each --tty device must map to a unique TCP port")
 
     return args
 
@@ -119,8 +166,9 @@ def format_peer(peername):
 class SerialTelnetRepeater:
     """Bridge one serial port to many concurrent Telnet clients."""
 
-    def __init__(self, args):
+    def __init__(self, args, bridge: BridgeConfig):
         self.args = args
+        self.bridge = bridge
         self.stop_event = threading.Event()
         self.serial_write_queue = queue.Queue(maxsize=args.serial_write_queue_size)
         self.clients = set()
@@ -138,18 +186,21 @@ class SerialTelnetRepeater:
         """Start workers and serve Telnet clients until stop is requested."""
         self.loop = asyncio.get_running_loop()
         self.start_serial_workers()
-
-        self.server = await telnetlib3.create_server(
-            host=self.args.host,
-            port=self.args.port,
-            shell=self.shell,
-            encoding=False,
-            line_mode=False,
-            timeout=False,
-        )
-        logging.info("Listening on %s:%d", self.args.host, self.args.port)
-
         try:
+            self.server = await telnetlib3.create_server(
+                host=self.args.host,
+                port=self.bridge.port,
+                shell=self.shell,
+                encoding=False,
+                line_mode=False,
+                timeout=False,
+            )
+            logging.info(
+                "%s: listening on %s:%d",
+                self.bridge.device,
+                self.args.host,
+                self.bridge.port,
+            )
             while not self.stop_event.is_set():
                 await asyncio.sleep(0.2)
         finally:
@@ -183,8 +234,8 @@ class SerialTelnetRepeater:
     def _open_serial(self):
         """Open and return a configured serial handle."""
         return serial.Serial(
-            self.args.serial,
-            self.args.baud,
+            self.bridge.device,
+            self.bridge.baud,
             timeout=0.0 if self.args.unbuffered_serial else 1.0,
             write_timeout=1.0,
         )
@@ -216,7 +267,8 @@ class SerialTelnetRepeater:
         if reason:
             self._serial_was_lost = True
             logging.warning(
-                "Serial disconnected (%s). Reconnecting every %.1fs...",
+                "%s: serial disconnected (%s). Reconnecting every %.1fs...",
+                self.bridge.device,
                 reason,
                 self.args.serial_reconnect_delay,
             )
@@ -238,7 +290,8 @@ class SerialTelnetRepeater:
                 now = time.monotonic()
                 if now >= self._next_reconnect_log_at:
                     logging.warning(
-                        "Serial unavailable (%s). Retrying in %.1fs...",
+                        "%s: serial unavailable (%s). Retrying in %.1fs...",
+                        self.bridge.device,
                         exc,
                         self.args.serial_reconnect_delay,
                     )
@@ -252,8 +305,8 @@ class SerialTelnetRepeater:
                     self._next_reconnect_log_at = 0.0
                     logging.info(
                         "Serial connected: %s @ %d (%s mode)",
-                        self.args.serial,
-                        self.args.baud,
+                        self.bridge.device,
+                        self.bridge.baud,
                         "unbuffered" if self.args.unbuffered_serial else "buffered",
                     )
                     if self._serial_was_lost:
@@ -386,7 +439,7 @@ class SerialTelnetRepeater:
         """Handle one Telnet client session."""
         peer = writer.get_extra_info("peername")
         self.clients.add(writer)
-        logging.info("Client connected: %s", format_peer(peer))
+        logging.info("%s: client connected: %s", self.bridge.device, format_peer(peer))
 
         with self.serial_lock:
             serial_up = self.ser is not None and self.ser.is_open
@@ -408,12 +461,21 @@ class SerialTelnetRepeater:
                 try:
                     self.serial_write_queue.put_nowait(data)
                 except queue.Full:
-                    logging.warning("Serial write queue full; disconnecting %s", format_peer(peer))
+                    logging.warning(
+                        "%s: serial write queue full; disconnecting %s",
+                        self.bridge.device,
+                        format_peer(peer),
+                    )
                     break
         finally:
             self.clients.discard(writer)
             await self._safe_writer_close_wait(writer)
-            logging.info("Client disconnected: %s", format_peer(peer))
+            logging.info("%s: client disconnected: %s", self.bridge.device, format_peer(peer))
+
+
+async def run_bridges(repeaters):
+    """Run all configured bridges until one stops or startup fails."""
+    await asyncio.gather(*(repeater.run() for repeater in repeaters))
 
 
 def main():
@@ -424,17 +486,18 @@ def main():
         format="%(asctime)s %(levelname)s %(message)s",
     )
 
-    repeater = SerialTelnetRepeater(args)
+    repeaters = [SerialTelnetRepeater(args, bridge) for bridge in args.bridges]
 
     def handle_signal(_signum, _frame):
         """Signal callback: request a clean asynchronous shutdown."""
-        repeater.request_stop()
+        for repeater in repeaters:
+            repeater.request_stop()
 
     signal.signal(signal.SIGINT, handle_signal)
     signal.signal(signal.SIGTERM, handle_signal)
 
     try:
-        asyncio.run(repeater.run())
+        asyncio.run(run_bridges(repeaters))
     except KeyboardInterrupt:
         pass
     except serial.SerialException as exc:
